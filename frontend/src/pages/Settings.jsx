@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { dummyUser, dummyPreferences } from '../data/dummyData';
+import api from '../services/api';
 
 const DIETARY_OPTIONS = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Keto', 'Paleo'];
 const CUISINES = ['Any', 'Italian', 'Mexican', 'Indian', 'Chinese', 'Japanese', 'Thai', 'French', 'Mediterranean', 'American'];
@@ -13,6 +13,7 @@ const Settings = () => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     // Profile state
     const [profile, setProfile] = useState({
@@ -37,37 +38,71 @@ const Settings = () => {
     });
 
     useEffect(() => {
-        loadUserData();
+        fetchUserData();
     }, []);
 
-    const loadUserData = () => {
-        setProfile({
-            name: dummyUser.name,
-            email: dummyUser.email
-        });
+  const fetchUserData = async () => {
+  try {
+    const response = await api.get('/users/profile');
+    const { user, preferences: userPrefs } = response.data.data;
 
-        setPreferences({
-            dietary_restrictions: dummyPreferences.dietary_restrictions || [],
-            allergies: dummyPreferences.allergies || [],
-            preferred_cuisines: dummyPreferences.preferred_cuisines || [],
-            default_servings: dummyPreferences.default_servings || 4,
-            measurement_unit: dummyPreferences.measurement_unit || 'metric'
-        });
-    };
+    setProfile({
+      name: user.name,
+      email: user.email
+    });
 
-    const handleProfileUpdate = (e) => {
+    if (userPrefs) {
+      setPreferences({
+        dietary_restrictions: userPrefs.dietary_restrictions || [],
+        allergies: userPrefs.allergies || [],
+        preferred_cuisines: userPrefs.preferred_cuisines || [],
+        default_servings: userPrefs.default_servings || 4,
+        measurement_unit: userPrefs.measurement_unit || 'metric'
+      });
+    }
+
+  } catch (error) {
+    toast.error('Failed to load user data');
+  } finally {
+    setLoading(false);
+  }
+};
+
+    const handleProfileUpdate = async (e) => {
         e.preventDefault();
-        // UI-only update
-        toast.success('Profile updated successfully');
+        setSaving(true);
+
+try {
+  await api.put('/users/profile', profile);
+  toast.success('Profile updated successfully');
+
+  // Update local storage
+  const updatedUser = { ...user, ...profile };
+  localStorage.setItem('user', JSON.stringify(updatedUser));
+
+} catch (error) {
+  toast.error('Failed to update profile');
+} finally {
+  setSaving(false);
+}
     };
 
-    const handlePreferencesUpdate = (e) => {
+    const handlePreferencesUpdate = async (e) => {
         e.preventDefault();
-        // UI-only update
-        toast.success('Preferences updated successfully');
+        setSaving(true);
+
+try {
+  await api.put('/users/preferences', preferences);
+  toast.success('Preferences updated successfully');
+} catch (error) {
+  toast.error('Failed to update preferences');
+} finally {
+  setSaving(false);
+}
+      
     };
 
-    const handlePasswordChange = (e) => {
+    const handlePasswordChange = async (e) => {
         e.preventDefault();
 
         if (passwordData.newPassword !== passwordData.confirmPassword) {
@@ -79,13 +114,30 @@ const Settings = () => {
             toast.error('Password must be at least 6 characters');
             return;
         }
+     setSaving(true);
 
-        // UI-only password change
-        toast.success('Password changed successfully');
-        setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+try {
+  await api.put('/users/change-password', {
+    currentPassword: passwordData.currentPassword,
+    newPassword: passwordData.newPassword
+  });
+
+  toast.success('Password changed successfully!');
+
+  setPasswordData({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+
+} catch (error) {
+  toast.error(error.response?.data?.message || 'Failed to change password');
+} finally {
+  setSaving(false);
+}
     };
 
-    const handleDeleteAccount = () => {
+    const handleDeleteAccount = async () => {
         if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
             return;
         }
@@ -95,11 +147,18 @@ const Settings = () => {
             toast.error('Account deletion cancelled');
             return;
         }
+        try {
+  await api.delete('/users/account');
+  toast.success('Account deleted successfully');
 
-        // UI-only delete
-        toast.success('Account deleted successfully');
-        logout();
-        navigate('/login');
+  logout();
+  navigate('/login');
+
+} catch (error) {
+  toast.error('Failed to delete account');
+}
+
+       
     };
 
     const toggleDietary = (option) => {

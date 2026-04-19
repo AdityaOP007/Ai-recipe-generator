@@ -18,7 +18,7 @@ class Recipe {
         prep_time,
         cook_time,
         servings,
-        instructions,
+        instructions = [],
         dietary_tags = [],
         user_notes,
         image_url,
@@ -26,11 +26,15 @@ class Recipe {
         nutrition = {}
       } = recipeData;
 
-      // ✅ FIXED: JSON stringify added
+      // ✅ Safety checks
+      const safeInstructions = Array.isArray(instructions) ? instructions : [];
+      const safeDietaryTags = Array.isArray(dietary_tags) ? dietary_tags : [];
+
+      // ✅ Insert recipe
       const recipeResult = await client.query(
         `INSERT INTO recipes
         (user_id, name, description, cuisine_type, difficulty, prep_time, cook_time, servings, instructions, dietary_tags, user_notes, image_url)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING *`,
         [
           userId,
@@ -41,43 +45,55 @@ class Recipe {
           prep_time,
           cook_time,
           servings,
-          JSON.stringify(instructions),   // ✅ FIX
-          JSON.stringify(dietary_tags),   // ✅ FIX
-          user_notes,
-          image_url
+          JSON.stringify(safeInstructions),
+          JSON.stringify(safeDietaryTags),
+          user_notes || null,
+          image_url || null
         ]
       );
 
       const recipe = recipeResult.rows[0];
 
-      // Insert ingredients
+      // ✅ Insert ingredients
       if (ingredients.length > 0) {
-        const ingredientValues = ingredients.map((_, idx) =>
-          `($1, $${idx * 3 + 2}, $${idx * 3 + 3}, $${idx * 3 + 4})`
-        ).join(', ');
+        const ingredientValues = ingredients
+          .map((_, idx) => `($1,$${idx * 3 + 2},$${idx * 3 + 3},$${idx * 3 + 4})`)
+          .join(', ');
 
         const ingredientParams = [recipe.id];
 
-        ingredients.forEach(ing => {
-          ingredientParams.push(ing.name, ing.quantity, ing.unit);
+        ingredients.forEach((ing) => {
+          ingredientParams.push(
+            ing.name || '',
+            ing.quantity || 0,
+            ing.unit || ''
+          );
         });
 
         await client.query(
-          `INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit)
+          `INSERT INTO recipe_ingredients
+           (recipe_id, ingredient_name, quantity, unit)
            VALUES ${ingredientValues}`,
           ingredientParams
         );
       }
 
-      // Insert nutrition
+      // ✅ Insert nutrition
       if (nutrition && Object.keys(nutrition).length > 0) {
         const { calories, protein, carbs, fats, fiber } = nutrition;
 
         await client.query(
           `INSERT INTO recipe_nutrition
           (recipe_id, calories, protein, carbs, fats, fiber)
-          VALUES ($1, $2, $3, $4, $5, $6)`,
-          [recipe.id, calories, protein, carbs, fats, fiber]
+          VALUES ($1,$2,$3,$4,$5,$6)`,
+          [
+            recipe.id,
+            calories || 0,
+            protein || 0,
+            carbs || 0,
+            fats || 0,
+            fiber || 0
+          ]
         );
       }
 
@@ -86,12 +102,16 @@ class Recipe {
 
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error("CREATE RECIPE ERROR:", error.message);
       throw error;
     } finally {
       client.release();
     }
   }
 
+  /**
+   * Get recipe by ID
+   */
   static async findById(id, userId) {
     const recipeResult = await db.query(
       'SELECT * FROM recipes WHERE id = $1 AND user_id = $2',
@@ -101,6 +121,10 @@ class Recipe {
     if (recipeResult.rows.length === 0) return null;
 
     const recipe = recipeResult.rows[0];
+
+    // ✅ Parse JSON fields
+    recipe.instructions = JSON.parse(recipe.instructions || '[]');
+    recipe.dietary_tags = JSON.parse(recipe.dietary_tags || '[]');
 
     const ingredientsResult = await db.query(
       'SELECT ingredient_name as name, quantity, unit FROM recipe_ingredients WHERE recipe_id = $1',
@@ -119,6 +143,9 @@ class Recipe {
     };
   }
 
+  /**
+   * Get recipes with filters
+   */
   static async findByUserId(userId, filters = {}) {
     let query = `SELECT r.*, rn.calories FROM recipes r
                  LEFT JOIN recipe_nutrition rn ON r.id = rn.recipe_id
@@ -146,8 +173,8 @@ class Recipe {
 
     if (filters.dietary_tag) {
       paramCount++;
-      query += ` AND $${paramCount} = ANY (r.dietary_tags)`;
-      params.push(filters.dietary_tag);
+      query += ` AND r.dietary_tags::jsonb @> $${paramCount}`;
+      params.push(JSON.stringify([filters.dietary_tag]));
     }
 
     if (filters.max_cook_time) {
@@ -172,9 +199,18 @@ class Recipe {
     params.push(offset);
 
     const result = await db.query(query, params);
-    return result.rows;
+
+    // ✅ Parse JSON fields
+    return result.rows.map(r => ({
+      ...r,
+      instructions: JSON.parse(r.instructions || '[]'),
+      dietary_tags: JSON.parse(r.dietary_tags || '[]')
+    }));
   }
 
+  /**
+   * Get recent recipes
+   */
   static async getRecent(userId, limit = 5) {
     const result = await db.query(
       `SELECT r.*, rn.calories
@@ -189,6 +225,9 @@ class Recipe {
     return result.rows;
   }
 
+  /**
+   * Update recipe
+   */
   static async update(id, userId, updates) {
     const {
       name,
@@ -239,6 +278,9 @@ class Recipe {
     return result.rows[0];
   }
 
+  /**
+   * Delete recipe
+   */
   static async delete(id, userId) {
     const result = await db.query(
       'DELETE FROM recipes WHERE id = $1 AND user_id = $2 RETURNING *',
@@ -248,6 +290,9 @@ class Recipe {
     return result.rows[0];
   }
 
+  /**
+   * Get stats
+   */
   static async getStats(userId) {
     const result = await db.query(
       `SELECT

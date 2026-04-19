@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { ChefHat, UtensilsCrossed, Calendar, ShoppingCart, TrendingUp, Clock } from 'lucide-react';
-import { dummyStats, getRecentRecipes, getUpcomingMeals } from '../data/dummyData';
+import api from '../services/api';
 
 const Dashboard = () => {
     const [stats, setStats] = useState({
@@ -12,17 +12,53 @@ const Dashboard = () => {
     });
     const [recentRecipes, setRecentRecipes] = useState([]);
     const [upcomingMeals, setUpcomingMeals] = useState([]);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Load dummy data
-        setStats({
-            totalRecipes: dummyStats.recipes.total_recipes,
-            pantryItems: dummyStats.pantry.total_items,
-            mealsThisWeek: dummyStats.mealPlans.this_week_count
-        });
-        setRecentRecipes(getRecentRecipes(5));
-        setUpcomingMeals(getUpcomingMeals(5));
-    }, []);
+  fetchDashboardData();
+}, []);
+
+const fetchDashboardData = async () => {
+  try {
+    const [
+      recipesRes,
+      pantryRes,
+      mealPlanRes,
+      recentRes,
+      upcomingRes
+    ] = await Promise.all([
+      api.get('/recipes/stats'),
+      api.get('/pantry/stats'),
+      api.get('/meal-plans/stats'),
+      api.get('/recipes/recent?limit=5'),
+      api.get('/meal-plans/upcoming?limit=5')
+    ]);
+
+    setStats({
+      totalRecipes: recipesRes.data.data.stats.total_recipes || 0,
+      pantryItems: pantryRes.data.data.stats.total_items || 0,
+      mealsThisWeek: mealPlanRes.data.data.stats.this_week_count || 0
+    });
+
+    setRecentRecipes(recentRes.data.data.recipes || []);
+    setUpcomingMeals(upcomingRes.data.data.meals || []);
+
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+if (loading) {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Navbar />
+      <div className="flex items-center justify-center h-96">
+        <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    </div>
+  );
+}
 
     return (
         <div className="min-h-screen bg-gray-50">
